@@ -56,15 +56,15 @@ jobs:
           rsync -a "$SRC"/ ./ --exclude '.git/' --exclude '.github/'
           echo "Copied project files to repo root."
 
-      - name: Merge .github (preserve this workflow)
+      - name: Merge .github (skip any workflows from ZIP)
         run: |
           set -e
           SRC="${{ steps.srcdir.outputs.src }}"
           if [ -d "$SRC/.github" ]; then
             mkdir -p .github
-            # Bring over everything except this workflow file
-            rsync -a "$SRC/.github/" ./.github/ --exclude 'workflows/unpack-zip.yml'
-            echo "Merged .github from ZIP."
+            # copy everything in .github except workflows/**
+            rsync -a "$SRC/.github/" ./.github/ --exclude 'workflows/**'
+            echo "Merged .github (no workflows) from ZIP."
           else
             echo "No .github directory in ZIP; skipping merge."
           fi
@@ -84,6 +84,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nothing to commit."
           else
-            git commit -m "Unpack uploaded ZIP into repository (safe merge)"
+            git commit -m "Unpack uploaded ZIP into repository (safe merge, no workflows)"
             git push
           fi
