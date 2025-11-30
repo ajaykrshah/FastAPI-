@@ -1,0 +1,51 @@
+name: Unpack ZIP into repo
+
+on:
+  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find and unzip the first ZIP at repo root
+        run: |
+          set -e
+          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+          if [ -z "$ZIP" ]; then
+            echo "No ZIP found in repo root."
+            exit 1
+          fi
+          echo "Found ZIP: $ZIP"
+          sudo apt-get update -y && sudo apt-get install -y unzip
+          unzip -o "$ZIP" -d .
+          rm -f "$ZIP"
+
+      - name: Flatten nested folder if present
+        run: |
+          set -e
+          if [ -d fastapi-pdm-azure-github ]; then
+            shopt -s dotglob
+            mv fastapi-pdm-azure-github/* .
+            rmdir fastapi-pdm-azure-github
+          fi
+
+      - name: Commit unpacked files
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "Unpack uploaded ZIP into repository"
+            git push
+          fi
