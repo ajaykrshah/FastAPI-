@@ -1,7 +1,7 @@
-name: Unpack ZIP into repo
+name: Unpack ZIP into repo (safe)
 
 on:
-  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -15,7 +15,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Find and unzip the first ZIP at repo root
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip rsync
+
+      - name: Find ZIP and extract to temp
+        id: findzip
         run: |
           set -e
           ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
@@ -23,29 +29,61 @@ jobs:
             echo "No ZIP found in repo root."
             exit 1
           fi
-          echo "Found ZIP: $ZIP"
-          sudo apt-get update -y && sudo apt-get install -y unzip
-          unzip -o "$ZIP" -d .
-          rm -f "$ZIP"
+          echo "zip=$ZIP" >> $GITHUB_OUTPUT
+          rm -rf _unpack
+          mkdir -p _unpack
+          unzip -q "$ZIP" -d _unpack
+          echo "Extracted: $ZIP"
 
-      - name: Flatten nested folder if present
+      - name: Determine source dir
+        id: srcdir
         run: |
           set -e
-          if [ -d fastapi-pdm-azure-github ]; then
-            shopt -s dotglob
-            mv fastapi-pdm-azure-github/* .
-            rmdir fastapi-pdm-azure-github
+          # If the ZIP contains a single top-level folder, use it; otherwise use _unpack itself
+          entries=$(find _unpack -mindepth 1 -maxdepth 1 -printf '%f\n' | wc -l)
+          if [ "$entries" -eq 1 ] && [ -d "$(find _unpack -mindepth 1 -maxdepth 1 -type d)" ]; then
+            SRC="$(find _unpack -mindepth 1 -maxdepth 1 -type d)"
+          else
+            SRC="_unpack"
           fi
+          echo "src=$SRC" >> $GITHUB_OUTPUT
+          echo "Using SRC=$SRC"
+
+      - name: Copy project content (exclude .git and .github for now)
+        run: |
+          set -e
+          SRC="${{ steps.srcdir.outputs.src }}"
+          rsync -a "$SRC"/ ./ --exclude '.git/' --exclude '.github/'
+          echo "Copied project files to repo root."
+
+      - name: Merge .github (preserve this workflow)
+        run: |
+          set -e
+          SRC="${{ steps.srcdir.outputs.src }}"
+          if [ -d "$SRC/.github" ]; then
+            mkdir -p .github
+            # Bring over everything except this workflow file
+            rsync -a "$SRC/.github/" ./.github/ --exclude 'workflows/unpack-zip.yml'
+            echo "Merged .github from ZIP."
+          else
+            echo "No .github directory in ZIP; skipping merge."
+          fi
+
+      - name: Cleanup ZIP and temp dir
+        run: |
+          set -e
+          rm -f "${{ steps.findzip.outputs.zip }}"
+          rm -rf _unpack
 
       - name: Commit unpacked files
         run: |
           set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
+          git add -A
           if git diff --cached --quiet; then
             echo "Nothing to commit."
           else
-            git commit -m "Unpack uploaded ZIP into repository"
+            git commit -m "Unpack uploaded ZIP into repository (safe merge)"
             git push
           fi
